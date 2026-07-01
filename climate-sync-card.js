@@ -32,16 +32,6 @@ const HVAC_MODE_ICONS = {
   off: "mdi:power",
 };
 
-const HVAC_MODE_COLORS = {
-  auto: "#8bc34a",
-  heat_cool: "#9c27b0",
-  heat: "#ff8100",
-  cool: "#2196f3",
-  dry: "#00bcd4",
-  fan_only: "#00bcd4",
-  off: "var(--secondary-text-color, #9e9e9e)",
-};
-
 // The friendly labels HA uses for hvac modes are localized; we do a light
 // title-case fallback so it looks nice without translations.
 function prettify(value) {
@@ -315,7 +305,6 @@ class ClimateSyncCard extends HTMLElement {
           current: st.state,
           inSync: this._isInSync(null, true),
           iconFor: (m) => HVAC_MODE_ICONS[m] || "mdi:thermostat",
-          colorFor: (m) => HVAC_MODE_COLORS[m] || "var(--primary-color)",
           onSelect: (m) => this._setHvacMode(m),
         })
       );
@@ -376,41 +365,61 @@ class ClimateSyncCard extends HTMLElement {
     }
   }
 
-  // Builds a labelled row of pill buttons.
-  _buildRow({ label, options, current, inSync, iconFor, colorFor, onSelect }) {
+  // Builds a labelled row with a dropdown selector.
+  _buildRow({ label, options, current, inSync, iconFor, onSelect }) {
     const row = document.createElement("div");
     row.className = "row";
 
     const lbl = document.createElement("div");
     lbl.className = "row-label";
-    lbl.innerHTML = `${label}${
+    lbl.innerHTML = `<span>${label}</span>${
       inSync ? "" : ' <ha-icon class="warn" icon="mdi:alert-circle" title="Entities out of sync"></ha-icon>'
     }`;
     row.appendChild(lbl);
 
-    const opts = document.createElement("div");
-    opts.className = "options";
+    const wrap = document.createElement("div");
+    wrap.className = "select-wrap";
+
+    const icon = iconFor && current ? iconFor(current) : null;
+    if (icon) {
+      wrap.innerHTML = `<ha-icon class="select-icon" icon="${icon}"></ha-icon>`;
+    }
+
+    const select = document.createElement("select");
+    select.className = "cs-select";
+    // If the current value isn't part of the option list (or entities are out
+    // of sync), add a neutral placeholder so nothing looks force-selected.
+    const known = options.includes(current);
+    if (!known || !inSync) {
+      const ph = document.createElement("option");
+      ph.value = "";
+      ph.textContent = inSync ? "—" : "Mixed";
+      ph.disabled = true;
+      ph.selected = true;
+      select.appendChild(ph);
+    }
     options.forEach((opt) => {
-      const btn = document.createElement("button");
-      const active = opt === current;
-      btn.className = "pill" + (active ? " active" : "");
-      if (active && colorFor) {
-        btn.style.setProperty("--pill-active", colorFor(opt));
-      }
-      const icon = iconFor ? iconFor(opt) : null;
-      btn.innerHTML = `${
-        icon ? `<ha-icon icon="${icon}"></ha-icon>` : ""
-      }<span>${prettify(opt)}</span>`;
-      btn.addEventListener("click", () => onSelect(opt));
-      opts.appendChild(btn);
+      const o = document.createElement("option");
+      o.value = opt;
+      o.textContent = prettify(opt);
+      if (known && inSync && opt === current) o.selected = true;
+      select.appendChild(o);
     });
-    row.appendChild(opts);
+    select.addEventListener("change", () => {
+      if (select.value) onSelect(select.value);
+    });
+
+    wrap.appendChild(select);
+    wrap.insertAdjacentHTML(
+      "beforeend",
+      '<ha-icon class="chevron" icon="mdi:chevron-down"></ha-icon>'
+    );
+    row.appendChild(wrap);
     return row;
   }
 }
 
 ClimateSyncCard.styles = `
-  :host { --pill-active: var(--primary-color); }
   ha-card {
     padding: 16px;
     overflow: hidden;
@@ -476,43 +485,60 @@ ClimateSyncCard.styles = `
     margin-top: 4px;
   }
   /* rows */
-  .row { margin-bottom: 14px; }
+  .row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 10px;
+  }
   .row:last-child { margin-bottom: 0; }
   .row-label {
-    font-size: 0.8rem;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
+    font-size: 0.9rem;
     color: var(--secondary-text-color);
-    margin-bottom: 6px;
     display: flex;
     align-items: center;
     gap: 4px;
+    flex: 0 0 auto;
   }
-  .options {
+  .select-wrap {
+    position: relative;
     display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-  }
-  .pill {
-    display: inline-flex;
     align-items: center;
-    gap: 6px;
-    padding: 8px 14px;
-    border-radius: 20px;
+    flex: 1 1 auto;
+    max-width: 60%;
+  }
+  .select-icon {
+    position: absolute;
+    left: 10px;
+    color: var(--secondary-text-color);
+    --mdc-icon-size: 20px;
+    pointer-events: none;
+  }
+  .cs-select {
+    width: 100%;
+    appearance: none;
+    -webkit-appearance: none;
+    padding: 9px 34px 9px 12px;
     border: 1px solid var(--divider-color, #ccc);
+    border-radius: 8px;
     background: var(--card-background-color, #fff);
     color: var(--primary-text-color);
-    font-size: 0.9rem;
+    font-size: 0.95rem;
+    font-family: inherit;
     cursor: pointer;
-    transition: all 0.15s ease;
+    transition: border-color 0.15s ease;
   }
-  .pill:hover { border-color: var(--pill-active); }
-  .pill.active {
-    background: var(--pill-active);
-    border-color: var(--pill-active);
-    color: #fff;
+  .select-wrap:has(.select-icon) .cs-select { padding-left: 38px; }
+  .cs-select:hover { border-color: var(--primary-color); }
+  .cs-select:focus { outline: none; border-color: var(--primary-color); }
+  .chevron {
+    position: absolute;
+    right: 8px;
+    color: var(--secondary-text-color);
+    --mdc-icon-size: 20px;
+    pointer-events: none;
   }
-  .pill ha-icon { --mdc-icon-size: 20px; }
   .warn { color: var(--warning-color, #ff9800); --mdc-icon-size: 18px; }
 `;
 
