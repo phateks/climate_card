@@ -726,5 +726,5 @@ window.customCards.push({
   description:
     "Control multiple identical climate entities at once. Auto-reads modes/fan/preset/swing from the entities.",
   preview: true,
-  documentationURL: "https://github.com/yourname/climate-sync-card",
+  documentationURL: "https://github.com/phateks/climate-sync-card",
 });

@@ -8,7 +8,7 @@ Ideal pentru situația în care ai două (sau mai multe) aparate de aer condiți
 - când schimbi **HVAC mode / preset / fan / swing / temperatură**, trimite comanda către **toate** entitățile selectate în același timp;
 - afișează un avertisment ⚠️ dacă entitățile nu sunt sincronizate (au valori diferite).
 
-![preview](https://raw.githubusercontent.com/yourname/climate-sync-card/main/preview.png)
+![preview](https://raw.githubusercontent.com/phateks/climate-sync-card/main/preview.png)
 
 ---
 
