@@ -10,7 +10,7 @@
  * License: MIT
  */
 
-const CARD_VERSION = "1.2.0";
+const CARD_VERSION = "1.3.0";
 
 console.info(
   `%c CLIMATE-SYNC-CARD %c v${CARD_VERSION} `,
@@ -68,9 +68,15 @@ class ClimateSyncCard extends HTMLElement {
     this._pendingTempTimer = null;
     // Re-render guards: don't tear down the DOM while a dropdown is open, and
     // skip renders when nothing we display has changed.
-    this._selectOpen = false;
+    this._menuOpen = false;
+    this._openChip = null;
+    this._outsideHandler = null;
     this._dirty = false;
     this._lastSig = null;
+  }
+
+  disconnectedCallback() {
+    this._closeMenu();
   }
 
   /* ---- Lovelace plumbing ---- */
@@ -233,8 +239,8 @@ class ClimateSyncCard extends HTMLElement {
     }
 
     // Don't tear down the DOM while the user has a dropdown open, otherwise the
-    // native <select> gets removed and the popup closes instantly.
-    if (this._selectOpen) {
+    // popup gets removed and closes instantly.
+    if (this._menuOpen) {
       this._dirty = true;
       return;
     }
@@ -435,7 +441,7 @@ class ClimateSyncCard extends HTMLElement {
   }
 
   // Builds a compact chip that shows an icon + current value and opens a
-  // native dropdown (an invisible <select> overlaid on top) when tapped.
+  // custom popup menu (icons per option, highlighted selection) when tapped.
   _buildChip({ label, options, current, inSync, iconFor, accentFor, onSelect }) {
     const chip = document.createElement("div");
     chip.className = "chip";
@@ -455,50 +461,90 @@ class ClimateSyncCard extends HTMLElement {
       <ha-icon class="chevron" icon="mdi:chevron-down"></ha-icon>
     `;
 
-    const select = document.createElement("select");
-    select.className = "chip-select";
-    // If the current value isn't part of the option list (or entities are out
-    // of sync), add a neutral placeholder so nothing looks force-selected.
-    if (!known || !inSync) {
-      const ph = document.createElement("option");
-      ph.value = "";
-      ph.textContent = inSync ? "—" : "Mixed";
-      ph.disabled = true;
-      ph.selected = true;
-      select.appendChild(ph);
-    }
+    // Custom popup list.
+    const menu = document.createElement("div");
+    menu.className = "menu";
+    menu.setAttribute("role", "listbox");
     options.forEach((opt) => {
-      const o = document.createElement("option");
-      o.value = opt;
-      o.textContent = prettify(opt);
-      if (known && inSync && opt === current) o.selected = true;
-      select.appendChild(o);
+      const isSel = inSync && known && opt === current;
+      const oIcon = iconFor ? iconFor(opt) : null;
+      // Colour-code each option's icon when accents are per-value (hvac mode).
+      const oAccent = accentFor ? accentFor(opt) : "var(--primary-color)";
+
+      const item = document.createElement("div");
+      item.className = "menu-item" + (isSel ? " selected" : "");
+      item.style.setProperty("--item-accent", oAccent);
+      item.innerHTML = `
+        ${oIcon ? `<ha-icon class="menu-item-icon" icon="${oIcon}"></ha-icon>` : ""}
+        <span class="menu-item-label">${prettify(opt)}</span>
+        ${isSel ? '<ha-icon class="menu-check" icon="mdi:check"></ha-icon>' : ""}
+      `;
+      item.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        this._closeMenu();
+        onSelect(opt);
+      });
+      menu.appendChild(item);
     });
-    select.addEventListener("change", () => {
-      if (select.value) onSelect(select.value);
-    });
-    // While the dropdown is open the select holds focus; block re-renders so
-    // the popup doesn't get destroyed under the user's cursor.
-    select.addEventListener("focus", () => {
-      this._selectOpen = true;
-    });
-    select.addEventListener("blur", () => {
-      this._selectOpen = false;
-      if (this._dirty) {
-        this._dirty = false;
-        this._render();
-      }
+    // Clicks on the menu chrome shouldn't toggle the chip.
+    menu.addEventListener("click", (ev) => ev.stopPropagation());
+    chip.appendChild(menu);
+
+    chip.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      if (chip.classList.contains("open")) this._closeMenu();
+      else this._openMenu(chip);
     });
 
-    chip.appendChild(select);
     return chip;
+  }
+
+  _openMenu(chip) {
+    this._closeMenu();
+    chip.classList.add("open");
+    this._openChip = chip;
+    this._menuOpen = true;
+
+    // Bring the selected item into view within the (scrollable) menu.
+    const menu = chip.querySelector(".menu");
+    const sel = menu && menu.querySelector(".menu-item.selected");
+    if (menu && sel) {
+      menu.scrollTop =
+        sel.offsetTop - menu.clientHeight / 2 + sel.clientHeight / 2;
+    }
+
+    // Close when clicking anywhere outside this chip. Added on the next tick so
+    // the click that opened the menu doesn't immediately close it.
+    this._outsideHandler = (ev) => {
+      if (!ev.composedPath().includes(chip)) this._closeMenu();
+    };
+    setTimeout(
+      () => document.addEventListener("click", this._outsideHandler, true),
+      0
+    );
+  }
+
+  _closeMenu() {
+    if (this._openChip) this._openChip.classList.remove("open");
+    this._openChip = null;
+    this._menuOpen = false;
+    if (this._outsideHandler) {
+      document.removeEventListener("click", this._outsideHandler, true);
+      this._outsideHandler = null;
+    }
+    // Apply any state updates that were deferred while the menu was open.
+    if (this._dirty) {
+      this._dirty = false;
+      this._render();
+    }
   }
 }
 
 ClimateSyncCard.styles = `
   ha-card {
     padding: 16px;
-    overflow: hidden;
+    /* visible so the custom dropdown popup can extend past the card edge */
+    overflow: visible;
   }
   .header {
     display: flex;
@@ -589,7 +635,7 @@ ClimateSyncCard.styles = `
     box-shadow: 0 0 0 1px var(--chip-accent) inset;
   }
   .chip:active { transform: scale(0.97); }
-  .chip:focus-within {
+  .chip.open {
     border-color: var(--chip-accent);
     box-shadow: 0 0 0 1px var(--chip-accent) inset;
   }
@@ -605,22 +651,67 @@ ClimateSyncCard.styles = `
     --mdc-icon-size: 18px;
     pointer-events: none;
     flex: 0 0 auto;
+    transition: transform 0.18s ease;
   }
-  /* The real <select> sits invisibly on top of the chip and handles taps. */
-  .chip-select {
-    position: absolute;
-    inset: 0;
-    width: 100%;
-    height: 100%;
-    margin: 0;
-    padding: 0;
-    border: none;
-    opacity: 0;
-    cursor: pointer;
-    appearance: none;
-    -webkit-appearance: none;
-  }
+  .chip.open .chevron { transform: rotate(180deg); }
   .warn { color: var(--warning-color, #ff9800); --mdc-icon-size: 18px; pointer-events: none; }
+
+  /* custom dropdown popup */
+  .menu {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    z-index: 20;
+    display: none;
+    width: max-content;
+    min-width: 100%;
+    max-width: 240px;
+    max-height: 264px;
+    overflow-y: auto;
+    padding: 6px;
+    box-sizing: border-box;
+    background: var(--card-background-color, #1e1e1e);
+    border: 1px solid var(--divider-color, rgba(255, 255, 255, 0.12));
+    border-radius: 14px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+    animation: cs-menu-in 0.12s ease;
+  }
+  .chip.open .menu { display: block; }
+  @keyframes cs-menu-in {
+    from { opacity: 0; transform: translateY(-4px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .menu-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 12px;
+    border-radius: 9px;
+    font-size: 0.95rem;
+    font-weight: 500;
+    color: var(--primary-text-color);
+    white-space: nowrap;
+    cursor: pointer;
+    transition: background 0.12s ease;
+  }
+  .menu-item:hover { background: var(--secondary-background-color, rgba(255, 255, 255, 0.08)); }
+  .menu-item.selected {
+    color: var(--item-accent, var(--primary-color));
+    background: var(--secondary-background-color, rgba(255, 255, 255, 0.06));
+  }
+  .menu-item-icon {
+    --mdc-icon-size: 20px;
+    color: var(--item-accent, var(--secondary-text-color));
+    opacity: 0.9;
+    flex: 0 0 auto;
+  }
+  .menu-item.selected .menu-item-icon { opacity: 1; }
+  .menu-item-label { flex: 1 1 auto; }
+  .menu-check {
+    --mdc-icon-size: 18px;
+    color: var(--item-accent, var(--primary-color));
+    flex: 0 0 auto;
+  }
 `;
 
 customElements.define("climate-sync-card", ClimateSyncCard);
