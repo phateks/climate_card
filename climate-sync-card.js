@@ -10,7 +10,7 @@
  * License: MIT
  */
 
-const CARD_VERSION = "1.1.0";
+const CARD_VERSION = "1.2.0";
 
 console.info(
   `%c CLIMATE-SYNC-CARD %c v${CARD_VERSION} `,
@@ -30,6 +30,17 @@ const HVAC_MODE_ICONS = {
   dry: "mdi:water-percent",
   fan_only: "mdi:fan",
   off: "mdi:power",
+};
+
+// Accent color per hvac mode, so the Mode chip icon is colour-coded.
+const HVAC_MODE_COLORS = {
+  auto: "#2e9e5b",
+  heat_cool: "#8bc34a",
+  heat: "#ff8100",
+  cool: "#2b9af9",
+  dry: "#f5c443",
+  fan_only: "#00bcd4",
+  off: "var(--secondary-text-color)",
 };
 
 // The friendly labels HA uses for hvac modes are localized; we do a light
@@ -55,6 +66,11 @@ class ClimateSyncCard extends HTMLElement {
     // Local optimistic temperature so the +/- buttons feel snappy.
     this._pendingTemp = null;
     this._pendingTempTimer = null;
+    // Re-render guards: don't tear down the DOM while a dropdown is open, and
+    // skip renders when nothing we display has changed.
+    this._selectOpen = false;
+    this._dirty = false;
+    this._lastSig = null;
   }
 
   /* ---- Lovelace plumbing ---- */
@@ -215,7 +231,56 @@ class ClimateSyncCard extends HTMLElement {
       this._buildSkeleton();
       this._rendered = true;
     }
+
+    // Don't tear down the DOM while the user has a dropdown open, otherwise the
+    // native <select> gets removed and the popup closes instantly.
+    if (this._selectOpen) {
+      this._dirty = true;
+      return;
+    }
+
+    // hass updates fire on *every* state change in HA, not just ours. Only
+    // rebuild when something we actually display has changed.
+    const sig = this._signature();
+    if (sig === this._lastSig) return;
+    this._lastSig = sig;
+
     this._update();
+  }
+
+  // A cheap fingerprint of everything the card renders. If it hasn't changed,
+  // we can skip the re-render entirely (and avoid flicker / closing dropdowns).
+  _signature() {
+    const parts = [this._config.name || "", String(this._pendingTemp)];
+    for (const e of this._entityIds) {
+      const st = this._hass.states[e];
+      if (!st) {
+        parts.push(e + ":none");
+        continue;
+      }
+      const a = st.attributes;
+      parts.push(
+        [
+          e,
+          st.state,
+          a.temperature,
+          a.current_temperature,
+          a.preset_mode,
+          a.fan_mode,
+          a.swing_mode,
+          a.min_temp,
+          a.max_temp,
+          a.target_temp_step,
+          a.friendly_name,
+          (a.hvac_modes || []).join(","),
+          (a.preset_modes || []).join(","),
+          (a.fan_modes || []).join(","),
+          (a.swing_modes || []).join(","),
+        ].join("|")
+      );
+    }
+    parts.push(this._hass.config?.unit_system?.temperature || "");
+    return parts.join("§");
   }
 
   _buildSkeleton() {
@@ -229,6 +294,7 @@ class ClimateSyncCard extends HTMLElement {
         <div class="content"></div>
       </ha-card>
     `;
+    this._lastSig = null;
   }
 
   _update() {
@@ -308,6 +374,7 @@ class ClimateSyncCard extends HTMLElement {
           current: st.state,
           inSync: this._isInSync(null, true),
           iconFor: (m) => HVAC_MODE_ICONS[m] || "mdi:thermostat",
+          accentFor: (m) => HVAC_MODE_COLORS[m] || "var(--primary-color)",
           onSelect: (m) => this._setHvacMode(m),
         })
       );
@@ -369,7 +436,7 @@ class ClimateSyncCard extends HTMLElement {
 
   // Builds a compact chip that shows an icon + current value and opens a
   // native dropdown (an invisible <select> overlaid on top) when tapped.
-  _buildChip({ label, options, current, inSync, iconFor, onSelect }) {
+  _buildChip({ label, options, current, inSync, iconFor, accentFor, onSelect }) {
     const chip = document.createElement("div");
     chip.className = "chip";
     chip.title = label;
@@ -377,6 +444,9 @@ class ClimateSyncCard extends HTMLElement {
     const known = options.includes(current);
     const valueText = !inSync ? "Mixed" : known ? prettify(current) : "—";
     const icon = iconFor && current ? iconFor(current) : null;
+    const accent =
+      inSync && known && accentFor ? accentFor(current) : "var(--primary-color)";
+    chip.style.setProperty("--chip-accent", accent);
 
     chip.innerHTML = `
       ${icon ? `<ha-icon class="chip-icon" icon="${icon}"></ha-icon>` : ""}
@@ -406,6 +476,18 @@ class ClimateSyncCard extends HTMLElement {
     });
     select.addEventListener("change", () => {
       if (select.value) onSelect(select.value);
+    });
+    // While the dropdown is open the select holds focus; block re-renders so
+    // the popup doesn't get destroyed under the user's cursor.
+    select.addEventListener("focus", () => {
+      this._selectOpen = true;
+    });
+    select.addEventListener("blur", () => {
+      this._selectOpen = false;
+      if (this._dirty) {
+        this._dirty = false;
+        this._render();
+      }
     });
 
     chip.appendChild(select);
@@ -485,31 +567,44 @@ ClimateSyncCard.styles = `
     gap: 8px;
   }
   .chip {
+    --chip-accent: var(--primary-color);
     position: relative;
     display: inline-flex;
     align-items: center;
-    gap: 6px;
-    padding: 8px 8px 8px 12px;
-    border: 1px solid var(--divider-color, #ccc);
-    border-radius: 20px;
-    background: var(--card-background-color, #fff);
+    gap: 7px;
+    padding: 9px 10px 9px 13px;
+    border: 1px solid var(--divider-color, rgba(255, 255, 255, 0.12));
+    border-radius: 22px;
+    background: var(--secondary-background-color, rgba(255, 255, 255, 0.04));
     color: var(--primary-text-color);
     font-size: 0.95rem;
+    font-weight: 500;
     line-height: 1;
     cursor: pointer;
-    transition: border-color 0.15s ease, background 0.15s ease;
+    transition: border-color 0.15s ease, background 0.15s ease,
+      box-shadow 0.15s ease, transform 0.08s ease;
   }
-  .chip:hover { border-color: var(--primary-color); }
+  .chip:hover {
+    border-color: var(--chip-accent);
+    box-shadow: 0 0 0 1px var(--chip-accent) inset;
+  }
+  .chip:active { transform: scale(0.97); }
+  .chip:focus-within {
+    border-color: var(--chip-accent);
+    box-shadow: 0 0 0 1px var(--chip-accent) inset;
+  }
   .chip-icon {
-    color: var(--secondary-text-color);
+    color: var(--chip-accent);
     --mdc-icon-size: 20px;
     pointer-events: none;
+    flex: 0 0 auto;
   }
   .chip-val { white-space: nowrap; pointer-events: none; }
   .chip .chevron {
     color: var(--secondary-text-color);
     --mdc-icon-size: 18px;
     pointer-events: none;
+    flex: 0 0 auto;
   }
   /* The real <select> sits invisibly on top of the chip and handles taps. */
   .chip-select {
@@ -525,7 +620,6 @@ ClimateSyncCard.styles = `
     appearance: none;
     -webkit-appearance: none;
   }
-  .chip-select:focus-visible + * { outline: none; }
   .warn { color: var(--warning-color, #ff9800); --mdc-icon-size: 18px; pointer-events: none; }
 `;
 
