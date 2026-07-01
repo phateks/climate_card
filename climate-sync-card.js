@@ -10,7 +10,7 @@
  * License: MIT
  */
 
-const CARD_VERSION = "1.3.0";
+const CARD_VERSION = "1.3.1";
 
 console.info(
   `%c CLIMATE-SYNC-CARD %c v${CARD_VERSION} `,
@@ -726,6 +726,7 @@ class ClimateSyncCardEditor extends HTMLElement {
     this._config = {};
     this._hass = null;
     this._rendered = false;
+    this._climateSigCache = null;
   }
 
   setConfig(config) {
@@ -735,7 +736,20 @@ class ClimateSyncCardEditor extends HTMLElement {
 
   set hass(hass) {
     this._hass = hass;
-    this._render();
+    // Rebuild only on first paint or when the list of climate entities actually
+    // changes. Otherwise a routine hass update would wipe the form and steal
+    // focus from the name field / close the primary-entity dropdown.
+    if (!this._rendered || this._climateSig() !== this._climateSigCache) {
+      this._render();
+    }
+  }
+
+  // Signature of the pickable climate entities (id + friendly name).
+  _climateSig() {
+    if (!this._hass) return "";
+    return this._climateEntities()
+      .map((e) => e + ":" + (this._hass.states[e].attributes.friendly_name || ""))
+      .join("|");
   }
 
   _emit() {
@@ -883,6 +897,10 @@ class ClimateSyncCardEditor extends HTMLElement {
         this._emit();
       });
     });
+
+    // Remember what the entity list looked like for this build, so plain hass
+    // updates can be ignored (see the `hass` setter).
+    this._climateSigCache = this._climateSig();
   }
 }
 
