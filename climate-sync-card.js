@@ -10,7 +10,7 @@
  * License: MIT
  */
 
-const CARD_VERSION = "1.0.0";
+const CARD_VERSION = "1.1.0";
 
 console.info(
   `%c CLIMATE-SYNC-CARD %c v${CARD_VERSION} `,
@@ -296,10 +296,13 @@ class ClimateSyncCard extends HTMLElement {
       content.appendChild(tempEl);
     }
 
-    /* --- HVAC modes --- */
+    /* --- Compact chip selectors: Mode / Preset / Fan / Swing --- */
+    const chips = document.createElement("div");
+    chips.className = "chips-row";
+
     if (this._config.show_hvac_modes && Array.isArray(a.hvac_modes)) {
-      content.appendChild(
-        this._buildRow({
+      chips.appendChild(
+        this._buildChip({
           label: "Mode",
           options: a.hvac_modes,
           current: st.state,
@@ -310,14 +313,13 @@ class ClimateSyncCard extends HTMLElement {
       );
     }
 
-    /* --- Preset --- */
     if (
       this._config.show_preset &&
       Array.isArray(a.preset_modes) &&
       a.preset_modes.length
     ) {
-      content.appendChild(
-        this._buildRow({
+      chips.appendChild(
+        this._buildChip({
           label: "Preset",
           options: a.preset_modes,
           current: a.preset_mode,
@@ -328,14 +330,13 @@ class ClimateSyncCard extends HTMLElement {
       );
     }
 
-    /* --- Fan --- */
     if (
       this._config.show_fan &&
       Array.isArray(a.fan_modes) &&
       a.fan_modes.length
     ) {
-      content.appendChild(
-        this._buildRow({
+      chips.appendChild(
+        this._buildChip({
           label: "Fan",
           options: a.fan_modes,
           current: a.fan_mode,
@@ -346,14 +347,13 @@ class ClimateSyncCard extends HTMLElement {
       );
     }
 
-    /* --- Swing --- */
     if (
       this._config.show_swing &&
       Array.isArray(a.swing_modes) &&
       a.swing_modes.length
     ) {
-      content.appendChild(
-        this._buildRow({
+      chips.appendChild(
+        this._buildChip({
           label: "Swing",
           options: a.swing_modes,
           current: a.swing_mode,
@@ -363,33 +363,32 @@ class ClimateSyncCard extends HTMLElement {
         })
       );
     }
+
+    if (chips.children.length) content.appendChild(chips);
   }
 
-  // Builds a labelled row with a dropdown selector.
-  _buildRow({ label, options, current, inSync, iconFor, onSelect }) {
-    const row = document.createElement("div");
-    row.className = "row";
+  // Builds a compact chip that shows an icon + current value and opens a
+  // native dropdown (an invisible <select> overlaid on top) when tapped.
+  _buildChip({ label, options, current, inSync, iconFor, onSelect }) {
+    const chip = document.createElement("div");
+    chip.className = "chip";
+    chip.title = label;
 
-    const lbl = document.createElement("div");
-    lbl.className = "row-label";
-    lbl.innerHTML = `<span>${label}</span>${
-      inSync ? "" : ' <ha-icon class="warn" icon="mdi:alert-circle" title="Entities out of sync"></ha-icon>'
-    }`;
-    row.appendChild(lbl);
-
-    const wrap = document.createElement("div");
-    wrap.className = "select-wrap";
-
+    const known = options.includes(current);
+    const valueText = !inSync ? "Mixed" : known ? prettify(current) : "—";
     const icon = iconFor && current ? iconFor(current) : null;
-    if (icon) {
-      wrap.innerHTML = `<ha-icon class="select-icon" icon="${icon}"></ha-icon>`;
-    }
+
+    chip.innerHTML = `
+      ${icon ? `<ha-icon class="chip-icon" icon="${icon}"></ha-icon>` : ""}
+      <span class="chip-val">${valueText}</span>
+      ${inSync ? "" : '<ha-icon class="warn" icon="mdi:alert-circle" title="Entities out of sync"></ha-icon>'}
+      <ha-icon class="chevron" icon="mdi:chevron-down"></ha-icon>
+    `;
 
     const select = document.createElement("select");
-    select.className = "cs-select";
+    select.className = "chip-select";
     // If the current value isn't part of the option list (or entities are out
     // of sync), add a neutral placeholder so nothing looks force-selected.
-    const known = options.includes(current);
     if (!known || !inSync) {
       const ph = document.createElement("option");
       ph.value = "";
@@ -409,13 +408,8 @@ class ClimateSyncCard extends HTMLElement {
       if (select.value) onSelect(select.value);
     });
 
-    wrap.appendChild(select);
-    wrap.insertAdjacentHTML(
-      "beforeend",
-      '<ha-icon class="chevron" icon="mdi:chevron-down"></ha-icon>'
-    );
-    row.appendChild(wrap);
-    return row;
+    chip.appendChild(select);
+    return chip;
   }
 }
 
@@ -484,62 +478,55 @@ ClimateSyncCard.styles = `
     color: var(--secondary-text-color);
     margin-top: 4px;
   }
-  /* rows */
-  .row {
+  /* chips */
+  .chips-row {
     display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    margin-bottom: 10px;
+    flex-wrap: wrap;
+    gap: 8px;
   }
-  .row:last-child { margin-bottom: 0; }
-  .row-label {
-    font-size: 0.9rem;
-    color: var(--secondary-text-color);
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    flex: 0 0 auto;
-  }
-  .select-wrap {
+  .chip {
     position: relative;
-    display: flex;
+    display: inline-flex;
     align-items: center;
-    flex: 1 1 auto;
-    max-width: 60%;
-  }
-  .select-icon {
-    position: absolute;
-    left: 10px;
-    color: var(--secondary-text-color);
-    --mdc-icon-size: 20px;
-    pointer-events: none;
-  }
-  .cs-select {
-    width: 100%;
-    appearance: none;
-    -webkit-appearance: none;
-    padding: 9px 34px 9px 12px;
+    gap: 6px;
+    padding: 8px 8px 8px 12px;
     border: 1px solid var(--divider-color, #ccc);
-    border-radius: 8px;
+    border-radius: 20px;
     background: var(--card-background-color, #fff);
     color: var(--primary-text-color);
     font-size: 0.95rem;
-    font-family: inherit;
+    line-height: 1;
     cursor: pointer;
-    transition: border-color 0.15s ease;
+    transition: border-color 0.15s ease, background 0.15s ease;
   }
-  .select-wrap:has(.select-icon) .cs-select { padding-left: 38px; }
-  .cs-select:hover { border-color: var(--primary-color); }
-  .cs-select:focus { outline: none; border-color: var(--primary-color); }
-  .chevron {
-    position: absolute;
-    right: 8px;
+  .chip:hover { border-color: var(--primary-color); }
+  .chip-icon {
     color: var(--secondary-text-color);
     --mdc-icon-size: 20px;
     pointer-events: none;
   }
-  .warn { color: var(--warning-color, #ff9800); --mdc-icon-size: 18px; }
+  .chip-val { white-space: nowrap; pointer-events: none; }
+  .chip .chevron {
+    color: var(--secondary-text-color);
+    --mdc-icon-size: 18px;
+    pointer-events: none;
+  }
+  /* The real <select> sits invisibly on top of the chip and handles taps. */
+  .chip-select {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    border: none;
+    opacity: 0;
+    cursor: pointer;
+    appearance: none;
+    -webkit-appearance: none;
+  }
+  .chip-select:focus-visible + * { outline: none; }
+  .warn { color: var(--warning-color, #ff9800); --mdc-icon-size: 18px; pointer-events: none; }
 `;
 
 customElements.define("climate-sync-card", ClimateSyncCard);
